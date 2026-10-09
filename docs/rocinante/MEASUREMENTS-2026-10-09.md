@@ -1,6 +1,6 @@
 # Measured results and evaluation limits
 
-These are saved measurements from Rocinante, reviewed October 9, 2026. [The entry page](README.md) records hardware and engine provenance. Exact aggregate numbers are in [the evidence JSON](evidence/benchmarks-2026-10-09.json); the complete per-task evidence remains local.
+These are saved measurements from Rocinante, reviewed October 9, 2026. [The entry page](README.md) records hardware and engine provenance. Exact numbers and selected per-task pairs are in [the evidence JSON](evidence/benchmarks-2026-10-09.json). Raw requests, outputs, tool traces and private configurations remain local.
 
 ## What each speed number means
 
@@ -23,7 +23,7 @@ Opus's October 8 round ran fresh processes twice in mirrored order, totaling eig
 
 The five-switch stack improved those observed decode rates 5.3% and 6.7%. A separate exactness pass used reproducibility settings: `STRATA_IQ_MT_MIN=1`, adaptive swaps off, PCIe fraction zero and prompt cache zero. Each arm ran two cold 100K and two short requests. The stack's four outputs matched baseline byte for byte, with matched-text decode time reduced 3.2% and 2.8% in the two context categories. The new up-projection kernel alone reduced matched-text decode time 1.6% and 2.1%; its isolated bench passed 32/32 bitwise comparisons plus the parity self-test.
 
-`GR_UP8` loads weights earlier and uses eight lanes per output row while preserving the reduction order. Its first version spilled registers for larger verification windows under a two-block launch bound; removing that bound improved the actual SM120 path. `KV_HOST_DMA` replaces slow mapped-host stores during streamed prefill with DMA and protects partially filled KV blocks. `NO_PCIE_NODES` removes unused graph work only when PCIe share is fixed at zero. The local patch also guards the PLE copy's ordering on the device-plan path.
+`GR_UP8` loads weights earlier and uses eight lanes per output row while preserving the reduction order. Its first version spilled registers for larger verification windows under a two-block launch bound; removing that bound improved the actual SM120 path. `KV_HOST_DMA` replaces slow mapped-host stores during streamed prefill with DMA and protects partially filled KV blocks. `NO_PCIE_NODES` removes unused graph work only when PCIe share is fixed at zero. The patch also guards the PLE copy's ordering on the device-plan path. See [the as-built diff](evidence/opus-as-built-2026-10-08.diff).
 
 Device-side planning helped the high-hit warm cache but slowed the lower-hit reproducibility arms. The English draft vocabulary and 8K draft attention window reduced per-pass work but also reduced acceptance and changed output. Their net benefit was small, and they were not selected for serving. The serving subset's approximately 3% isolated decode gain was originally an estimate from individual switches, not a separately measured combined arm. The later agent comparison below measures that subset directly, with the output-length caveat.
 

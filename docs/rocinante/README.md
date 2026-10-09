@@ -8,8 +8,9 @@ Our priority is **completed, correct agent tasks at 32K–100K context**, includ
 
 1. [Measured results and evaluation limits](MEASUREMENTS-2026-10-09.md): the completed 100K-context kernel check, its output-budget correction, and our separate dense-model baseline.
 2. [Research candidates and questions](RESEARCH-2026-10-09.md): Swift IQ3_S, a second GPU as an expert tier, GLM, Radiance and Zyphra expert coupling.
-3. [Selected benchmark evidence](evidence/benchmarks-2026-10-09.json): aggregate measurements, protocol settings and source hashes.
+3. [Selected benchmark evidence](evidence/benchmarks-2026-10-09.json): aggregate measurements, matched repair pairs, protocol settings and source hashes.
 4. [External source revisions](evidence/research-sources-2026-10-09.json): pinned source URLs and hashes for the inspected GLM and Radiance code.
+5. [Opus as-built kernel patch](evidence/opus-as-built-2026-10-08.diff): exact source changes against the evaluation base, supplied as a review artifact.
 
 ## Machine and serving snapshot
 
@@ -29,7 +30,7 @@ Our priority is **completed, correct agent tasks at 32K–100K context**, includ
 
 The saved restoration evidence identifies executable `strata-opus-kernel-20261008` with SHA256 `987a2492211830ccb31e17b2962bca732023add32ebee0dcb59872dffda69824`. This is a dated snapshot, not a live health check. The known `DF_BRANCH` stall risk was accepted for that serving configuration; the bounded comparison observed no engine failures, which does not prove long-duration stability.
 
-**Source-version distinction:** this GitHub fork was created from upstream main at `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. The local Opus patch applies to evaluation base `d5ea713`, not necessarily to that newer main. The patch remains local and is not included in this publication. Publishing this handoff did not upgrade Rocinante. Reading the fork's current source alone does not reconstruct the evaluated executable; reproducing it requires the local patch, original build settings and dependencies.
+**Source-version distinction:** this GitHub fork was created from upstream main at `fb58e0dbc8399662c0e47c76578c6e878b14f6cf`. The archived patch applies to evaluation base `d5ea713`, not necessarily to that newer main. It is included as an evidence file, not applied to the fork's engine source. Publishing this handoff did not upgrade Rocinante. Review the patch with the pinned evaluation base; reproducing the executable also requires the original build settings and dependencies.
 
 ## Request for GPT-6 Pro or another reviewer
 

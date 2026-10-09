@@ -1,7 +1,7 @@
 {
   "schema": "rocinante-public-research-evidence-v1",
   "compiled_date": "2026-10-09",
-  "scope": "Published research notes and selected aggregate results, not a new run or live serving-state verification. Raw requests, outputs, per-task traces, logs, private configurations and the unpublished kernel source patch remain local. Hashes identify the saved originals.",
+  "scope": "Published research notes, kernel patch review artifact and selected benchmark evidence, not a new run or live serving-state verification. Raw requests, outputs, logs and private configurations remain local. Source hashes identify local originals.",
   "hardware": {
     "cpu": "AMD EPYC 7452",
     "cpu_cores": 32,
@@ -21,8 +21,10 @@
     "version": "0.1.40.3",
     "model": "Original Qwen3.8-Flash-Next GSQ-RCO IQ3_S",
     "patched_executable_sha256": "987a2492211830ccb31e17b2962bca732023add32ebee0dcb59872dffda69824",
-    "patched_source_in_this_commit": false,
-    "patch_sha256": "b332add560027169751645c754ee432d9d51fa8d1134ae99fa30a3161064162a"
+    "patched_source_in_this_commit": true,
+    "patch_sha256": "b332add560027169751645c754ee432d9d51fa8d1134ae99fa30a3161064162a",
+    "patch_artifact": "opus-as-built-2026-10-08.diff",
+    "patch_applied_to_fork_engine_source": false
   },
   "kernel_quality_comparison": {
     "protocol": {
@@ -57,7 +59,56 @@
         "incomplete_response",
         "saved_solution_not_verified"
       ],
-      "limits": "Small checkable repair tasks with large background prefix; does not establish general coding quality or confidence bounds. Truncated responses are not graded as wrong facts."
+      "limits": "Small checkable repair tasks with large background prefix; does not establish general coding quality or confidence bounds. Truncated responses are not graded as wrong facts.",
+      "tasks": [
+        "01-typed-facts-v1",
+        "01-typed-facts-v2",
+        "02-checkpoint-victim-v1",
+        "02-checkpoint-victim-v2",
+        "03-tool-fragments-v1",
+        "03-tool-fragments-v2",
+        "04-latency-stats-v1",
+        "04-latency-stats-v2",
+        "05-interval-union-v1",
+        "05-interval-union-v2",
+        "06-topological-order-v1",
+        "06-topological-order-v2",
+        "07-weighted-budget-v1",
+        "07-weighted-budget-v2",
+        "08-retry-delay-v1",
+        "08-retry-delay-v2",
+        "09-counter-delta-v1",
+        "09-counter-delta-v2",
+        "10-event-dedupe-v1",
+        "10-event-dedupe-v2"
+      ],
+      "profiles": {
+        "original": {
+          "executable_label": "strata",
+          "env": {},
+          "pcie_fraction": "0.55"
+        },
+        "live-subset": {
+          "executable_label": "strata-opus-kernel-20261008",
+          "env": {
+            "STRATA_GR_UP8": "1",
+            "STRATA_KV_HOST_DMA": "1",
+            "STRATA_DF_BRANCH": "1"
+          },
+          "pcie_fraction": "0.55"
+        },
+        "five-switch": {
+          "executable_label": "strata-opus-kernel-20261008",
+          "env": {
+            "STRATA_GR_UP8": "1",
+            "STRATA_KV_HOST_DMA": "1",
+            "STRATA_DF_BRANCH": "1",
+            "STRATA_NO_PCIE_NODES": "1",
+            "STRATA_VERIFY_DEVICE_PLAN": "1"
+          },
+          "pcie_fraction": "0"
+        }
+      }
     },
     "saved_evidence_audit_passed": true,
     "actual_repair_allowance_range": [
@@ -240,6 +291,332 @@
         "sha256": "b7d597fdb5c6af7747c17c463c7b0190c6b18dc0fd704d4ee4c008a405010a66",
         "local_artifact_label": "quality-kernel-20261008/run-v1/postrun-verification.json"
       }
+    },
+    "matched_repair_pairs": {
+      "live-subset": [
+        {
+          "task": "01-typed-facts-v1",
+          "original_s": 38.02483854499587,
+          "candidate_s": 31.668001147001632,
+          "original_output_tokens": 2000,
+          "candidate_output_tokens": 1237,
+          "wall_change_percent": -16.717592082533137
+        },
+        {
+          "task": "02-checkpoint-victim-v1",
+          "original_s": 7.944187265995424,
+          "candidate_s": 6.482181106999633,
+          "original_output_tokens": 863,
+          "candidate_output_tokens": 646,
+          "wall_change_percent": -18.403470487834717
+        },
+        {
+          "task": "03-tool-fragments-v1",
+          "original_s": 7.956814934004797,
+          "candidate_s": 8.07244046399137,
+          "original_output_tokens": 857,
+          "candidate_output_tokens": 944,
+          "wall_change_percent": 1.4531634950114114
+        },
+        {
+          "task": "04-latency-stats-v1",
+          "original_s": 11.339550396005507,
+          "candidate_s": 11.180628760004765,
+          "original_output_tokens": 1503,
+          "candidate_output_tokens": 1461,
+          "wall_change_percent": -1.4014809269397799
+        },
+        {
+          "task": "05-interval-union-v1",
+          "original_s": 13.126270298002055,
+          "candidate_s": 9.155897425007424,
+          "original_output_tokens": 1680,
+          "candidate_output_tokens": 1114,
+          "wall_change_percent": -30.247532489095242
+        },
+        {
+          "task": "06-topological-order-v1",
+          "original_s": 5.673633974001859,
+          "candidate_s": 5.863475967998966,
+          "original_output_tokens": 503,
+          "candidate_output_tokens": 549,
+          "wall_change_percent": 3.3460387974799666
+        },
+        {
+          "task": "07-weighted-budget-v1",
+          "original_s": 14.106494138002745,
+          "candidate_s": 22.902290547004668,
+          "original_output_tokens": 1860,
+          "candidate_output_tokens": 3339,
+          "wall_change_percent": 62.35281653225333
+        },
+        {
+          "task": "08-retry-delay-v1",
+          "original_s": 15.948106163996272,
+          "candidate_s": 15.50229646700609,
+          "original_output_tokens": 2024,
+          "candidate_output_tokens": 1927,
+          "wall_change_percent": -2.7953770335227723
+        },
+        {
+          "task": "09-counter-delta-v1",
+          "original_s": 6.51177615999768,
+          "candidate_s": 10.868609580997145,
+          "original_output_tokens": 657,
+          "candidate_output_tokens": 1178,
+          "wall_change_percent": 66.90698995097239
+        },
+        {
+          "task": "10-event-dedupe-v1",
+          "original_s": 7.768759491009405,
+          "candidate_s": 7.69697530400299,
+          "original_output_tokens": 817,
+          "candidate_output_tokens": 838,
+          "wall_change_percent": -0.9240109323694345
+        },
+        {
+          "task": "10-event-dedupe-v2",
+          "original_s": 30.991339703992708,
+          "candidate_s": 30.39534196999739,
+          "original_output_tokens": 859,
+          "candidate_output_tokens": 969,
+          "wall_change_percent": -1.9231105840788576
+        },
+        {
+          "task": "09-counter-delta-v2",
+          "original_s": 12.562494070007233,
+          "candidate_s": 7.092633401000057,
+          "original_output_tokens": 1538,
+          "candidate_output_tokens": 742,
+          "wall_change_percent": -43.54120000793781
+        },
+        {
+          "task": "08-retry-delay-v2",
+          "original_s": 8.871330606998526,
+          "candidate_s": 12.941101539006922,
+          "original_output_tokens": 1105,
+          "candidate_output_tokens": 1607,
+          "wall_change_percent": 45.875541249672104
+        },
+        {
+          "task": "07-weighted-budget-v2",
+          "original_s": 10.63013893000607,
+          "candidate_s": 9.879625674002455,
+          "original_output_tokens": 1236,
+          "candidate_output_tokens": 1079,
+          "wall_change_percent": -7.06023939052306
+        },
+        {
+          "task": "06-topological-order-v2",
+          "original_s": 7.916954379004892,
+          "candidate_s": 6.4855543809972005,
+          "original_output_tokens": 834,
+          "candidate_output_tokens": 635,
+          "wall_change_percent": -18.08018499896432
+        },
+        {
+          "task": "05-interval-union-v2",
+          "original_s": 8.625421058997745,
+          "candidate_s": 11.094032204011455,
+          "original_output_tokens": 970,
+          "candidate_output_tokens": 1347,
+          "wall_change_percent": 28.620181300465795
+        },
+        {
+          "task": "04-latency-stats-v2",
+          "original_s": 10.250827512994874,
+          "candidate_s": 13.059040046005975,
+          "original_output_tokens": 1339,
+          "candidate_output_tokens": 1667,
+          "wall_change_percent": 27.39498376546827
+        },
+        {
+          "task": "03-tool-fragments-v2",
+          "original_s": 19.886842658990645,
+          "candidate_s": 7.2785067740041995,
+          "original_output_tokens": 2672,
+          "candidate_output_tokens": 782,
+          "wall_change_percent": -63.400390404790286
+        },
+        {
+          "task": "02-checkpoint-victim-v2",
+          "original_s": 5.836496340998565,
+          "candidate_s": 5.604584082000656,
+          "original_output_tokens": 537,
+          "candidate_output_tokens": 526,
+          "wall_change_percent": -3.973484183804543
+        },
+        {
+          "task": "01-typed-facts-v2",
+          "original_s": 8.565884783005458,
+          "candidate_s": 10.830764390004333,
+          "original_output_tokens": 966,
+          "candidate_output_tokens": 1421,
+          "wall_change_percent": 26.440696604889546
+        }
+      ],
+      "five-switch": [
+        {
+          "task": "01-typed-facts-v1",
+          "original_s": 38.02483854499587,
+          "candidate_s": 30.960998661001213,
+          "original_output_tokens": 2000,
+          "candidate_output_tokens": 1061,
+          "wall_change_percent": -18.57690960511461
+        },
+        {
+          "task": "02-checkpoint-victim-v1",
+          "original_s": 7.944187265995424,
+          "candidate_s": 7.10867404199962,
+          "original_output_tokens": 863,
+          "candidate_output_tokens": 752,
+          "wall_change_percent": -10.517290139573666
+        },
+        {
+          "task": "03-tool-fragments-v1",
+          "original_s": 7.956814934004797,
+          "candidate_s": 6.536626489993068,
+          "original_output_tokens": 857,
+          "candidate_output_tokens": 686,
+          "wall_change_percent": -17.848705239357933
+        },
+        {
+          "task": "04-latency-stats-v1",
+          "original_s": 11.339550396005507,
+          "candidate_s": 12.371548851006082,
+          "original_output_tokens": 1503,
+          "candidate_output_tokens": 1615,
+          "wall_change_percent": 9.100876304267835
+        },
+        {
+          "task": "05-interval-union-v1",
+          "original_s": 13.126270298002055,
+          "candidate_s": 7.565571847997489,
+          "original_output_tokens": 1680,
+          "candidate_output_tokens": 876,
+          "wall_change_percent": -42.36312618711621
+        },
+        {
+          "task": "06-topological-order-v1",
+          "original_s": 5.673633974001859,
+          "candidate_s": 5.57419410199509,
+          "original_output_tokens": 503,
+          "candidate_output_tokens": 517,
+          "wall_change_percent": -1.7526663239544549
+        },
+        {
+          "task": "07-weighted-budget-v1",
+          "original_s": 14.106494138002745,
+          "candidate_s": 11.18126206001034,
+          "original_output_tokens": 1860,
+          "candidate_output_tokens": 1486,
+          "wall_change_percent": -20.73677590884797
+        },
+        {
+          "task": "08-retry-delay-v1",
+          "original_s": 15.948106163996272,
+          "candidate_s": 7.3271719769982155,
+          "original_output_tokens": 2024,
+          "candidate_output_tokens": 857,
+          "wall_change_percent": -54.05616252079065
+        },
+        {
+          "task": "09-counter-delta-v1",
+          "original_s": 6.51177615999768,
+          "candidate_s": 12.78160376699816,
+          "original_output_tokens": 657,
+          "candidate_output_tokens": 1517,
+          "wall_change_percent": 96.28444610114965
+        },
+        {
+          "task": "10-event-dedupe-v1",
+          "original_s": 7.768759491009405,
+          "candidate_s": 7.3075998590065865,
+          "original_output_tokens": 817,
+          "candidate_output_tokens": 779,
+          "wall_change_percent": -5.936078115643905
+        },
+        {
+          "task": "10-event-dedupe-v2",
+          "original_s": 30.991339703992708,
+          "candidate_s": 29.621168634999776,
+          "original_output_tokens": 859,
+          "candidate_output_tokens": 857,
+          "wall_change_percent": -4.421141783736471
+        },
+        {
+          "task": "09-counter-delta-v2",
+          "original_s": 12.562494070007233,
+          "candidate_s": 13.940414340002462,
+          "original_output_tokens": 1538,
+          "candidate_output_tokens": 1751,
+          "wall_change_percent": 10.968524739725005
+        },
+        {
+          "task": "08-retry-delay-v2",
+          "original_s": 8.871330606998526,
+          "candidate_s": 15.063105262001045,
+          "original_output_tokens": 1105,
+          "candidate_output_tokens": 1912,
+          "wall_change_percent": 69.79533205670268
+        },
+        {
+          "task": "07-weighted-budget-v2",
+          "original_s": 10.63013893000607,
+          "candidate_s": 15.478341294990969,
+          "original_output_tokens": 1236,
+          "candidate_output_tokens": 2144,
+          "wall_change_percent": 45.60808091886464
+        },
+        {
+          "task": "06-topological-order-v2",
+          "original_s": 7.916954379004892,
+          "candidate_s": 8.893955477004056,
+          "original_output_tokens": 834,
+          "candidate_output_tokens": 959,
+          "wall_change_percent": 12.34061801076043
+        },
+        {
+          "task": "05-interval-union-v2",
+          "original_s": 8.625421058997745,
+          "candidate_s": 9.864895774007891,
+          "original_output_tokens": 970,
+          "candidate_output_tokens": 1333,
+          "wall_change_percent": 14.370019811579727
+        },
+        {
+          "task": "04-latency-stats-v2",
+          "original_s": 10.250827512994874,
+          "candidate_s": 7.986638344998937,
+          "original_output_tokens": 1339,
+          "candidate_output_tokens": 948,
+          "wall_change_percent": -22.087867200239653
+        },
+        {
+          "task": "03-tool-fragments-v2",
+          "original_s": 19.886842658990645,
+          "candidate_s": 13.261207515999558,
+          "original_output_tokens": 2672,
+          "candidate_output_tokens": 1713,
+          "wall_change_percent": -33.316677044235085
+        },
+        {
+          "task": "02-checkpoint-victim-v2",
+          "original_s": 5.836496340998565,
+          "candidate_s": 5.519707291998202,
+          "original_output_tokens": 537,
+          "candidate_output_tokens": 529,
+          "wall_change_percent": -5.427726336005268
+        },
+        {
+          "task": "01-typed-facts-v2",
+          "original_s": 8.565884783005458,
+          "candidate_s": 8.705044695001561,
+          "original_output_tokens": 966,
+          "candidate_output_tokens": 1127,
+          "wall_change_percent": 1.6245830468347267
+        }
+      ]
     }
   },
   "dense_model_nvfp4_dflash": {

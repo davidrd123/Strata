@@ -1,0 +1,455 @@
+diff --git a/include/strata/core/expert_source.hpp b/include/strata/core/expert_source.hpp
+index 1bbdb41..75bc4cf 100644
+--- a/include/strata/core/expert_source.hpp
++++ b/include/strata/core/expert_source.hpp
+@@ -270,6 +270,15 @@ struct GpuPlanSink {
+     int pcie_mode = 0;
+ };
+ 
++/// STRATA_NO_PCIE_NODES=1 (opt-in; the driver reads it): the verify window's graph is captured without its PCIe-share
++/// nodes - per layer the flag-B wait, fetch_blobs / rebase_ptrs and the second grouped expert launch, which do nothing
++/// while no plan has a PCIe group (counts[2] == 0).  A PCIe group planned for such a graph would leave its rows at
++/// zero with no error, so this is ONE process-wide latch: the driver arms it before the first window is captured, and
++/// only when the command line fixed the PCIe share at zero (--pcie-frac 0).  It is never disarmed, and while it is set
++/// `expert_pool_dispatch_multi` plans no PCIe group whatever `ExpertDispatch::pcie_num` says.
++void no_pcie_nodes_arm();
++bool no_pcie_nodes();
++
+ /// The adapter's own state.  One per session, reused every layer so the token path allocates nothing (P2.T10).
+ struct ExpertDispatch {
+     strata::kernels::cpu::ExpertPool* pool = nullptr;
+diff --git a/src/core/expert_source.cpp b/src/core/expert_source.cpp
+index fcf8b71..8335c6a 100644
+--- a/src/core/expert_source.cpp
++++ b/src/core/expert_source.cpp
+@@ -2945,8 +2945,13 @@ namespace {
+ // refused at run time rather than written past them.
+ constexpr int64_t kMaxWindowEntries = 128;
+ static_assert(strata::kernels::cpu::MAXT * 10 <= kMaxWindowEntries, "a verify window's entries overflow the tables");
++// STRATA_NO_PCIE_NODES (expert_source.hpp): armed once by the driver, never cleared
++std::atomic<bool> g_no_pcie_nodes{false};
+ }  // namespace
+ 
++void no_pcie_nodes_arm() { g_no_pcie_nodes.store(true); }
++bool no_pcie_nodes() { return g_no_pcie_nodes.load(); }
++
+ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32_t* ids, int64_t n_tok, int64_t k,
+                                 float* out) {
+     using namespace strata::kernels::cpu;
+@@ -3010,6 +3015,16 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
+         }
+         const bool pcie_ok = d.pcie_num > 0 && d.src->pcie_layer(d.layers);
+         const int m = pcie_ok ? (nmiss * d.pcie_num) >> 8 : 0;
++        // STRATA_NO_PCIE_NODES: the window graph has no node that would compute a PCIe group (its rows would stay
++        // zero), so none is planned below whatever pcie_num says; the driver keeps pcie_num at 0 then (--pcie-frac 0)
++        const bool no_pcie = no_pcie_nodes();
++        if (no_pcie && d.pcie_num > 0) {
++            static std::atomic<bool> said{false};
++            if (!said.exchange(true))
++                std::fprintf(stderr, "strata: STRATA_NO_PCIE_NODES=1: a PCIe share of %d/256 of the misses was asked for and "
++                                     "is ignored (the verify windows have no PCIe-share nodes): the CPU computes them\n",
++                             d.pcie_num);
++        }
+         int miss_rank = 0, groups = 0, entries = 0, fetches = 0;
+         GpuPlanSink& P = *d.plan;
+         const uint8_t* dma_src[64];
+@@ -3030,7 +3045,7 @@ void expert_pool_dispatch_multi(ExpertDispatch& d, const float* x_f, const int32
+                 } else if (helper_holds(e)) {
+                     // left to the helper: kind -1 until RemoteExperts::begin() claims the row (see above)
+                 } else {
+-                    if (miss_rank >= nmiss - m && fetches < P.staging_cap && fetches < 64) {
++                    if (!no_pcie && miss_rank >= nmiss - m && fetches < P.staging_cap && fetches < 64) {
+                         const uint8_t* src = d.src->pinned(d.layers, e) ? d.src->blob(d.layers, e) : nullptr;
+                         if (src != nullptr) {
+                             kd = 1;
+diff --git a/src/core/verify.cpp b/src/core/verify.cpp
+index 6b80569..ffc2b4b 100644
+--- a/src/core/verify.cpp
++++ b/src/core/verify.cpp
+@@ -789,6 +789,32 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
+         if (l == 1 && ple_on) {
+             if (grp == 0) {
+                 if (ar_on()) wait_flag_ge(m_flag_, 1, cs);
++                if (device_plan_) {
++                    // E-6 and the PLE: run() gathers the window's PLE rows into h_ple_ while it serves ring 1 and
++                    // raises flag 1 after them.  On the doorbell graph only layer 0's wait_flag_ge(m_flag_, 1) orders
++                    // this copy after that gather, and with the device plan it is a wait_flag_ge_or, which returns at
++                    // once when the device planned layer 0's group.  So wait for flag 1 here too, as the all-resident
++                    // graph does (STRATA_VERIFY_DEVICE_PLAN_PLE_WAIT=0: no wait, E-6 as it was).  Not in a batch
++                    // window (stage_batch gathers the rows before the launch), nor in a stage that starts at layer 1
++                    // (the host raises flag 1 only after ring 1, which such a stage rings after this copy).
++                    static const bool dp_ple_wait_env = [] {
++                        const char* e = std::getenv("STRATA_VERIFY_DEVICE_PLAN_PLE_WAIT");
++                        return !e || e[0] != '0';
++                    }();
++                    const int dp_case = batch_rec_ ? 4 : lb_ != 0 ? 8 : dp_ple_wait_env ? 1 : 2;   // 1: the wait
++                    const char* dp_what =
++                        dp_case == 1 ? "on - layer 1 copies the PLE rows after host flag 1 "
++                                       "(STRATA_VERIFY_DEVICE_PLAN_PLE_WAIT=0 turns it off)"
++                        : dp_case == 2 ? "OFF by STRATA_VERIFY_DEVICE_PLAN_PLE_WAIT=0 - layer 1 can copy the PLE rows "
++                                         "before the host has gathered them"
++                        : dp_case == 4 ? "not needed - a batch window's PLE rows are gathered before the launch"
++                        : "not applied - this stage starts at layer 1, no ring comes before its PLE copy (as "
++                          "without the device plan)";
++                    static std::atomic<int> dp_said{0};   // each case said once, by the first window that records it
++                    if ((dp_said.fetch_or(dp_case) & dp_case) == 0)
++                        std::fprintf(stderr, "strata verify: device plan PLE wait (%d-token window): %s\n", T, dp_what);
++                    if (dp_case == 1) wait_flag_ge(m_flag_, 1, cs);
++                }
+                 copy_from_mapped(ple_, m_ple_, (int64_t) T * N, cs);
+             }
+             float* normalized = (float*) ((uint8_t*) ss.ple.scratch + ple_block_scratch_bytes());
+@@ -1364,6 +1390,22 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
+     }();
+     const bool fuse_head_gr = fuse_head_gr_env && (le_ == g.n_layers) && (head_ != nullptr && head_->loaded()) &&
+                               !cvec().covers(g.n_layers - 1);
++    // STRATA_NO_PCIE_NODES=1 at --pcie-frac 0 (no_pcie_nodes(): the driver arms it before the first capture and it is
++    // never disarmed; the pool then plans no PCIe group, so counts[2] is 0 in every plan): post() does not record the
++    // layer's flag-B wait, fetch_blobs / rebase_ptrs and second grouped launch.  With no PCIe group they write nothing
++    // a later node reads, and the host only ever raises flag B - it waits for nothing they do.
++    const bool no_pcie = no_pcie_nodes();
++    if (no_pcie) {
++        static std::atomic<bool> said[2];   // [the doorbell graph, the zero-doorbell graph]: each said once
++        if (!ar_on() && !said[0].exchange(true))
++            std::fprintf(stderr, "strata verify: STRATA_NO_PCIE_NODES=1: the %d-token window is captured without its "
++                                 "PCIe-share nodes (per layer: the flag-B wait, %sthe second grouped expert launch), "
++                                 "and so is every window captured after it\n",
++                         T, sink_.pcie_mode == 2 ? "fetch_blobs, rebase_ptrs, " : "");
++        if (ar_on() && !said[1].exchange(true))
++            std::fprintf(stderr, "strata verify: STRATA_NO_PCIE_NODES=1: nothing to skip in the %d-token zero-doorbell "
++                                 "window (100%% VRAM resident): that graph never had PCIe-share nodes\n", T);
++    }
+     auto post = [&](int64_t l, int grp) -> bool {
+         const int tb = tb_[grp], te = te_[grp], n = te - tb;
+         const uint32_t ring = (uint32_t) ((l - lb_) * G + grp + 1);
+@@ -1409,6 +1451,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
+             stamp(l, 19, grp);
+             grouped(p_ptr, p_start, p_counts, 0, hit_out);
+             stamp(l, 20, grp);
++            if (!no_pcie) {   // STRATA_NO_PCIE_NODES: none of this stage is recorded (see no_pcie above)
+             if (device_plan_) wait_flag_ge_or(m_flagB_, ring, skip_ + grp, cs);
+             else wait_flag_ge(m_flagB_, ring, cs);                 // the PCIe share is in staging (DMA) or mapped
+             if (sink_.pcie_mode == 2) {                            // stage it with a copy kernel, then point at staging
+@@ -1422,6 +1465,7 @@ bool Verifier::record_window(int T, cudaStream_t cs, std::string& err) {
+             // pcie_frac 0), so its launch is kPcieGroupRows block rows striding over the groups, not cap of them
+             grouped(p_ptr2, p_start2, p_counts + 2, kPcieGroupRows, hit_out);
+             stamp(l, 22, grp);
++            }
+             if (device_plan_) {   // no CPU share when the device planned the group: its rows are zeros
+                 wait_flag_ge_or(m_flag_, ring, skip_ + grp, cs);
+                 copy_or_zero_from_mapped(parts_out, m_ymiss_ + (size_t) tb * K * N, (long long) n * K * N,
+diff --git a/src/kernels/cuda/fused_gr.cu b/src/kernels/cuda/fused_gr.cu
+index 210cf22..dcf733f 100644
+--- a/src/kernels/cuda/fused_gr.cu
++++ b/src/kernels/cuda/fused_gr.cu
+@@ -366,6 +366,98 @@ __global__ void __launch_bounds__(THREADS) gr_up_multi_kernel(GrMulti m) {
+     if (m.a[0].q8_mixed != nullptr) gr_q8_tail(m, d0);   // S26 STRATA_QFUSE
+ }
+ 
++#if !defined(__HIPCC__) && !defined(STRATA_HIP_GFX906)
++#define STRATA_GR_UP8_KERNEL 1
++// ---- STRATA_GR_UP8=1 (opt-in, CUDA): `gr_up_multi_kernel` with a row on 8 lanes instead of a 32-lane warp, and a
++// thread's weights (two rows of five chunks) and epilogue inputs loaded before the first dot instead of one row's
++// load chain after another - the CUDA build of the gfx906 gr_up_fast_kernel below, with gr_up_multi_kernel's exact-T
++// instantiations.  The same bits as gr_up_multi_kernel, add for add: there lane L < 8 holds
++// v[L] = dot(chunk L) + dot(chunk 32 + L) and lane L >= 8 holds v[L] = dot(chunk L); warp_sum's stages 16 and 8 leave
++// lane j < 8 with (v[j] + v[j + 16]) + (v[j + 8] + v[j + 24]), and stages 4, 2, 1 pair it with lanes j ^ 4, j ^ 2,
++// j ^ 1 - all below 8 - so the sum lane k = token k reads back is built from lanes 0-7 alone.  Here lane j of a row's
++// 8 holds chunks j, j + 8, j + 16, j + 24 and 32 + j, forms that stage-8 value itself (the same operands on the same
++// sides) and shuffles stages 4, 2, 1 inside the 8.  Every dot is the same dot8u_ptr chain of 8 fmaf over the same
++// chunk, and nothing from the dots to the sum is a multiply the compiler could contract.  3 shuffles a token instead
++// of 5 and no idle lanes on the tail chunks.  A block's 64 rows are 2 passes of 32 rows.  No q8_1 tail: a read that
++// writes the image (STRATA_QFUSE) keeps gr_up_multi_kernel (launch_multi).
++__device__ __forceinline__ float lanes8_sum(float v) {
++#pragma unroll
++    for (int o = 4; o > 0; o >>= 1) v += __shfl_xor_sync(0xffffffffu, v, o);
++    return v;
++}
++// (launch bounds: two blocks per SM, i.e. at most 128 registers a thread - a thread holds 40 of weights - so the 160
++// blocks are resident together on a card of 80 SMs or more)
++template <int MAX_T = kFusedGrMaxT, bool EXACT_T = false>
++// (launch bounds: THREADS only.  With a two-blocks-per-SM bound the 3-6 row instantiations hit 128 registers and
++// spilled on sm_120 (cuobjdump STACK 168-896), which made 5 and 6 rows 4-8 us slower than the default kernel;
++// unbounded they take 167-255 registers and fused_gr_bench measures about 4 us less per read at every T.)
++__global__ void __launch_bounds__(THREADS) gr_up8_kernel(GrMulti m) {
++    __shared__ __align__(16) float lo[MAX_T][LR];
++    __shared__ float g[MAX_T][HC][UPM_COLS];
++    static_assert(LR == 40 * 8 && HC * UPM_COLS == 64 && THREADS == 256, "geometry");
++    static_assert(MAX_T <= 8, "lane j of a row's 8 runs token j's epilogue");
++    const int t = threadIdx.x, j = t & 7, grp = t >> 3;   // lane j of rows grp and grp + 32 (4 rows a warp at once)
++    const int T = EXACT_T ? MAX_T : m.T;
++    const int d0 = blockIdx.x * UPM_COLS;
++    uint4 w[2][5];
++    float rv[2] = {0.0f, 0.0f}, wn[2] = {0.0f, 0.0f}, rsc[2] = {0.0f, 0.0f}, bo[2] = {0.0f, 0.0f}, ip[2] = {0.0f, 0.0f};
++    const bool apply = j < T && m.a[j < T ? j : 0].apply;
++#pragma unroll
++    for (int p = 0; p < 2; ++p) {
++        const int r = grp + 32 * p, c = r / UPM_COLS, dd = r - c * UPM_COLS, i = c * N + d0 + dd;
++        const uint4* w4 = reinterpret_cast<const uint4*>(m.a[0].w_up + (size_t) i * LR);
++#pragma unroll
++        for (int q = 0; q < 4; ++q) w[p][q] = __ldg(w4 + j + 8 * q);
++        w[p][4] = __ldg(w4 + 32 + j);
++        // the epilogue inputs of this lane's token, as gr_up_multi_kernel reads them
++        if (j < T) {
++            const FusedGrArgs& a = m.a[j];
++            rv[p] = a.R[i];
++            wn[p] = a.w_norm[i];
++            rsc[p] = a.rs[c];
++            if (apply) { bo[p] = a.bo_prev[d0 + dd]; ip[p] = a.inj_prev[c]; }
++        }
++    }
++    for (int i = t; i < T * LR; i += THREADS) lo[i / LR][i % LR] = m.a[i / LR].lo[i % LR];
++    __syncthreads();
++#pragma unroll
++    for (int p = 0; p < 2; ++p) {
++        const int r = grp + 32 * p, c = r / UPM_COLS, dd = r - c * UPM_COLS, i = c * N + d0 + dd;
++        const Bf16x8 u0 = unpack8(w[p][0]), u1 = unpack8(w[p][1]), u2 = unpack8(w[p][2]), u3 = unpack8(w[p][3]);
++        const Bf16x8 u4 = unpack8(w[p][4]);
++        float mine = 0.0f;
++#pragma unroll
++        for (int k = 0; k < MAX_T; ++k) {
++            if (!EXACT_T && k >= T) break;
++            float v0 = dot8u_ptr(u0, lo[k] + j * 8);                  // the old lane j: chunk j ...
++            v0 += dot8u_ptr(u4, lo[k] + (32 + j) * 8);                // ... and its second chunk, 32 + j
++            const float v1 = dot8u_ptr(u1, lo[k] + (j + 8) * 8);      // the old lane j + 8
++            const float v2 = dot8u_ptr(u2, lo[k] + (j + 16) * 8);     // the old lane j + 16
++            const float v3 = dot8u_ptr(u3, lo[k] + (j + 24) * 8);     // the old lane j + 24
++            const float s = lanes8_sum((v0 + v2) + (v1 + v3));        // stages 16 and 8 here, then 4, 2, 1
++            if (j == k) mine = s;
++        }
++        if (j < T) {
++            float x0 = rv[p];
++            if (apply) {
++                x0 = fmaf(bo[p], 2.0f * sigmoidf_(ip[p] / (float) HC), x0);
++                m.a[j].R_out[i] = x0;
++            }
++            const float x = x0 * wn[p] * rsc[p];
++            g[j][c][dd] = x * sigmoidf_(mine);
++        }
++    }
++    __syncthreads();
++    for (int i = t; i < T * UPM_COLS; i += THREADS) {
++        const int k = i / UPM_COLS, col = i - k * UPM_COLS;
++        float s = 0.0f;
++#pragma unroll
++        for (int c = 0; c < HC; ++c) s += g[k][c][col];
++        m.a[k].mixed[d0 + col] = s / (float) HC;
++    }
++}
++#endif
++
+ 
+ // ================================ hc read v3 (opt-in: STRATA_GR_V3=1) - two kernels, stream-split ================
+ // The norm kernel runs on only T blocks (~16 us of pure latency per call) and `down` on 41 blocks (~280 GB/s).
+@@ -846,6 +938,51 @@ bool gr_down_max4() {
+     }();
+     return on;
+ }
++#if defined(STRATA_GR_UP8_KERNEL)
++}  // namespace
++extern int g_gr_fast;   // fused_gr_set_fast (the bench), defined below
++namespace {
++// STRATA_GR_UP8=1 (opt-in, CUDA; default off): the up projection as gr_up8_kernel (above) - the default kernel's sums
++// in its order, so the same bits; fused_gr_bench compares the two on the card, its fused_gr_set_fast overriding the
++// environment.
++bool gr_up8_on() {
++    static const bool env = [] {
++        const char* v = std::getenv("STRATA_GR_UP8");
++        return v != nullptr && v[0] == '1';
++    }();
++    return g_gr_fast >= 0 ? g_gr_fast != 0 : env;
++}
++// launch_multi's up kernel for this read: gr_up8_kernel when the switch is on, named on stderr the first time; a read
++// that also writes its q8_1 image (S26 STRATA_QFUSE) keeps gr_up_multi_kernel, which has that tail, and says so once
++bool gr_up8(const GrMulti& m) {
++    if (!gr_up8_on()) return false;
++    if (m.a[0].q8_mixed != nullptr) {
++        static const bool said_q8 = [] {
++            std::fprintf(stderr, "strata hc: STRATA_GR_UP8: not used for a read that also writes its q8_1 image "
++                                 "(STRATA_QFUSE=1): that read keeps the default up kernel\n");
++            return true;
++        }();
++        (void) said_q8;
++        return false;
++    }
++    static const bool said = [] {
++        std::fprintf(stderr, "strata hc: STRATA_GR_UP8: the up projection runs as gr_up8_kernel (8 lanes per row, the "
++                             "weights loaded before the dots; the default up kernel's sums in its order)\n");
++        return true;
++    }();
++    (void) said;
++    return true;
++}
++// a read that never reaches launch_multi (the Q8_0 read, the STRATA_GR_V3 read): the switch does nothing there
++void gr_up8_unused(const char* read) {
++    if (!gr_up8_on()) return;
++    static const bool said = [read] {
++        std::fprintf(stderr, "strata hc: STRATA_GR_UP8: no effect on %s, which has its own up kernel\n", read);
++        return true;
++    }();
++    (void) said;
++}
++#endif
+ 
+ void launch_multi(const GrMulti& m, int variant, cudaStream_t st, unsigned long long* stamp_buf, int stamp_i0) {
+     const int n_tok = m.T;
+@@ -905,6 +1042,20 @@ void launch_multi(const GrMulti& m, int variant, cudaStream_t st, unsigned long
+         }
+     }
+     if (stamp_buf) gpu_stamp(stamp_buf, stamp_i0 + 1, (void*) st);
++#if defined(STRATA_GR_UP8_KERNEL)
++    if (gr_up8(m)) {   // STRATA_GR_UP8=1: the instantiations of the default up kernel below, 8 lanes per row
++        switch (no_multi_gr ? kFusedGrMaxT : n_tok) {
++            case 1: gr_up8_kernel<1, true><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++            case 2: gr_up8_kernel<2, true><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++            case 3: gr_up8_kernel<3, true><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++            case 4: gr_up8_kernel<4, true><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++            case 5: gr_up8_kernel<5, true><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++            case 6: gr_up8_kernel<6, true><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++            default: gr_up8_kernel<kFusedGrMaxT, false><<<UPM_BLOCKS, THREADS, 0, st>>>(m); break;
++        }
++        return;
++    }
++#endif
+ #if defined(STRATA_HIP_GFX906)
+     if (fast) gr_up_fast_kernel<<<UPM_BLOCKS, THREADS, 0, st>>>(m);
+     else
+@@ -1614,7 +1765,7 @@ static bool gr_fast() {
+     return g_gr_fast >= 0 ? g_gr_fast != 0 : env;
+ }
+ #else
+-int g_gr_fast = -1;
++int g_gr_fast = -1;   // fused_gr_set_fast (the bench); -1 = STRATA_GR_UP8 (CUDA: gr_up8_on above)
+ #endif
+ void fused_gr_set_fast(int on) { g_gr_fast = on; }
+ 
+@@ -1645,6 +1796,9 @@ bool fused_gr_read_multi(const FusedGrArgs* a, int n_tok, float* xn_scratch, voi
+     m.T = n_tok;
+     cudaStream_t st = (cudaStream_t) stream;
+     if (a[0].q8_down != nullptr && a[0].q8_up != nullptr) {   // inject: Q8_0 copy, or the BF16 rows
++#if defined(STRATA_GR_UP8_KERNEL)
++        gr_up8_unused("the Q8_0 read (STRATA_HC_Q8=1)");
++#endif
+         launch_q8(m, xn_scratch, st, stamp_buf, stamp_i0);   // S23 experiment: STRATA_HC_Q8=1
+         const cudaError_t eq = cudaGetLastError();
+         if (eq != cudaSuccess) {
+@@ -1690,6 +1844,9 @@ bool fused_gr_read_multi(const FusedGrArgs* a, int n_tok, float* xn_scratch, voi
+     }
+     const int split = v3 && dev3 >= 0 && dev3 < 64 ? split3[dev3] : -1;
+     if (split > 0) {   // 2 kernels; scratch = partials + sums of squares
++#if defined(STRATA_GR_UP8_KERNEL)
++        gr_up8_unused("the STRATA_GR_V3=1 read");
++#endif
+         float* part = xn_scratch;
+         float* ssg = xn_scratch + (size_t) n_tok * HC * 2 * PR;   // room for S = 2
+         const size_t sm = (size_t) n_tok * (N / split) * sizeof(float);
+diff --git a/src/kernels/fused_gr_bench.cpp b/src/kernels/fused_gr_bench.cpp
+index b7b8452..419eb41 100644
+--- a/src/kernels/fused_gr_bench.cpp
++++ b/src/kernels/fused_gr_bench.cpp
+@@ -1,5 +1,9 @@
+ // src/kernels/fused_gr_bench.cpp - fused_gr_read_multi: the AMD fast kernels (STRATA_GR_FAST) against the old
+-// ones, bit for bit on every output (lo, rs, inject, mixed, the in-place R), and each one's time.
++// ones, bit for bit on every output (lo, rs, inject, mixed, the in-place R), and each one's time.  On CUDA "fast" is
++// the 8-lanes-per-row up kernel (STRATA_GR_UP8: fused_gr_set_fast switches it here whatever the environment says, and
++// stderr names it the first time it runs); the norm and the down projection are the same launches in both columns.
++// T 1..6 are the exact-T kernels, 7 and 8 (or STRATA_NO_MULTI_GR=1) the generic one; STRATA_HC_SPLIT=2 times the
++// staged read a verify window runs.
+ //
+ //     build/fused_gr_bench [iters] [T min] [T max]
+ #include "strata/kernels/fused_gr.hpp"
+diff --git a/src/prefill/prefill.cpp b/src/prefill/prefill.cpp
+index 23eaf1d..e567045 100644
+--- a/src/prefill/prefill.cpp
++++ b/src/prefill/prefill.cpp
+@@ -2368,11 +2368,43 @@ bool Prefill::run_impl(const int64_t* tokens, int64_t n, int64_t pos0, std::stri
+                     // resident slots only, and one DMA copies the chunk's blocks from the staging pool to the host copy
+                     // - no kernel writes host memory over PCIe.  The bytes every reader sees are the same (the staged
+                     // first block is complete; past the chunk's last cell nothing is read until a later append writes
+-                    // it).  CUDA: never.
++                    // it).  CUDA: the same switch, default off (below).
+ #if defined(STRATA_USE_HIP)
+                     static const bool kv_host_dma = [] { const char* e = std::getenv("STRATA_KV_HOST_DMA"); return e && e[0] == '1'; }();
+ #else
+-                    constexpr bool kv_host_dma = false;
++                    // CUDA (opt-in A/B, STRATA_KV_HOST_DMA=1; unset: the append kernel writes the host copy, as before):
++                    // the kernel's byte stores into the device-mapped host copy run at about 1 GB/s on an RTX PRO 5000
++                    // (9.35 ms per QSA layer and 8,192-token chunk); the DMA moves the same bytes.  Streamed fp16, int8
++                    // and q4_0 K/V only: K8V4's halves below always write the host copy from their kernels.
++                    static const bool kv_host_dma = [] { const char* e = std::getenv("STRATA_KV_HOST_DMA"); return e && e[0] == '1'; }();
++                    if (kv_host_dma) {
++                        const bool dma = staged && !st.kv_hybrid;
++                        static bool said_dma = false, said_kept = false;
++                        bool& said = dma ? said_dma : said_kept;
++                        if (!said) {
++                            said = true;
++                            if (dma)
++                                std::fprintf(stderr, "strata prefill: STRATA_KV_HOST_DMA=1: the host K/V copy is written by "
++                                                     "DMA from the staging pool, not by the append kernel (%s K/V; first "
++                                                     "at layer %lld, chunk from token %lld, %lld tokens)\n",
++                                             st.kv_q4 ? "q4_0" : st.kv_int8 ? "int8" : "fp16", (long long) l,
++                                             (long long) p0, (long long) T);
++                            else
++                                std::fprintf(stderr, "strata prefill: STRATA_KV_HOST_DMA=1 has no effect at layer %lld: %s "
++                                                     "(the old path runs)\n", (long long) l,
++                                             !staged ? "its K/V is not streamed, there is no host copy to write by DMA"
++                                                     : "K8V4 K/V keeps the append kernels' writes of the host copy");
++                        }
++                        // The chunk's last block, when the chunk ends inside it and it was not staged above: its cells
++                        // past the chunk's end are staged from the host copy first, so the DMA below writes back the
++                        // bytes the host copy already holds there (the kernel's writes leave them alone).  Every byte
++                        // of the host copy is then what the kernel path leaves, the cells nothing reads included (a
++                        // conversation snapshot saves whole blocks).  n_slots = n_pages: block b goes to block b.
++                        const int64_t bl = (p0 + T) / s.page_size;
++                        if (dma && (p0 + T) % s.page_size != 0 && bl >= (p0 + s.page_size - 1) / s.page_size)
++                            strata::kernels::kv_ring_restore(pools_of(m.stage, m.ident_table), st.host,
++                                                             core::qsa_kv_format(st), bl, bl + 1, st.n_pages, s, m.cs);
++                    }
+ #endif
+                     const bool host_by_dma = staged && kv_host_dma;
+                     const strata::kernels::KvHostPools* host_w = host_by_dma ? nullptr : &st.host;
+diff --git a/src/program/generate.cpp b/src/program/generate.cpp
+index ce8e004..e79c57f 100644
+--- a/src/program/generate.cpp
++++ b/src/program/generate.cpp
+@@ -2408,6 +2408,24 @@ int main(int argc, char** argv) {
+             std::fprintf(stderr, "strata generate: PCIe probe failed -> pcie_frac default %.2f\n", base);
+         }
+     }
++    // STRATA_NO_PCIE_NODES=1 (opt-in): the verify windows are captured without their PCIe-share nodes (per layer the
++    // flag-B wait, fetch_blobs / rebase_ptrs and the second grouped expert launch: 6 nodes that do nothing while no
++    // PCIe group is planned).  A PCIe group planned for such a graph would leave its rows at zero with no error, so it
++    // takes effect only when the command line fixed the share at zero for the whole process (--pcie-frac 0, which also
++    // skips every stage's link probe).  Then a request's pcie_frac key is ignored (below) and the pool plans no PCIe
++    // group whatever it is handed (core::no_pcie_nodes).  Results: those of --pcie-frac 0 without the switch.
++    static const bool no_pcie_env = [] {
++        const char* e = std::getenv("STRATA_NO_PCIE_NODES");
++        return e && e[0] == '1';
++    }();
++    if (no_pcie_env) {
++        if (pcie_given && std::max(0, std::min(256, (int) (o.pcie_frac * 256.0 + 0.5))) == 0)
++            strata::core::no_pcie_nodes_arm();   // (said by the verifier when it captures its first window)
++        else
++            std::fprintf(stderr, "strata generate: STRATA_NO_PCIE_NODES=1 is IGNORED: it needs --pcie-frac 0 on the command "
++                                 "line (the PCIe share is %.2f%s); the verify windows keep their PCIe-share nodes\n",
++                         o.pcie_frac, pcie_given ? "" : ", the default or the link probe's");
++    }
+     // the canonical Q2_0 pack's CPU kernels are AVX-512 only; a native pack runs on AVX2 CPUs as well
+     if (!native_pack) strata::kernels::cpu::cpu_require_expert_support();
+     else if (!strata::kernels::cpu::cpu_avx512_ok())
+@@ -9604,6 +9622,15 @@ int main(int argc, char** argv) {
+             ver.set_sampling(req_sp);
+             if (pipe) ver_b.set_sampling(req_sp);   // (reaches the later stage's odd verifier)
+             if (use_mtp) mtp.set_draft_sampling(req_sp);   // STRATA_SPEC_COUPLED=1: sampled drafts (a no-op otherwise)
++            // STRATA_NO_PCIE_NODES in effect: the windows have no PCIe-share nodes, so the request's key is not honoured
++            if (strata::core::no_pcie_nodes() && std::max(0, std::min(256, (int) (req_pcie_frac * 256.0 + 0.5))) != 0) {
++                static bool said = false;
++                if (!said)
++                    std::fprintf(stderr, "strata serve: STRATA_NO_PCIE_NODES=1: a request's pcie_frac=%.2f is ignored (the "
++                                         "verify windows have no PCIe-share nodes); the share stays 0\n", req_pcie_frac);
++                said = true;
++                req_pcie_frac = o.pcie_frac;
++            }
+             drive.d.pcie_num = std::max(0, std::min(256, (int) (req_pcie_frac * 256.0 + 0.5)));
+             // a layer split: CUDA0's share as asked; a later GPU keeps its own (its link) unless the request sets one
+             for (int st = 0; st < split_drive.n; ++st)

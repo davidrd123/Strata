@@ -1,0 +1,83 @@
+{
+  "schema": "rocinante-public-research-sources-v1",
+  "compiled_date": "2026-10-09",
+  "repositories": [
+    {
+      "repository": "https://github.com/OpenMOSE/Strata-GLM-AMD",
+      "commit": "6c71ff0d84f1543747ef9bc8451d56bcba3cccf7",
+      "checked_at_utc": "2026-10-09T07:22:22.405803+00:00",
+      "files": {
+        "README.md": {
+          "url": "https://raw.githubusercontent.com/OpenMOSE/Strata-GLM-AMD/6c71ff0d84f1543747ef9bc8451d56bcba3cccf7/README.md",
+          "sha256": "5ac6fe39bfc526a0a60fb0b1ba878ec5656530a2ddec460d9291aef295d25f3e",
+          "bytes": 13828
+        },
+        "docs/GLM5_NEXT.md": {
+          "url": "https://raw.githubusercontent.com/OpenMOSE/Strata-GLM-AMD/6c71ff0d84f1543747ef9bc8451d56bcba3cccf7/docs/GLM5_NEXT.md",
+          "sha256": "55935d43d44100a1eea219a3d7f51a2e10793f05e0762825dc76805b83cf7dfe",
+          "bytes": 80733
+        },
+        "CMakeLists.txt": {
+          "url": "https://raw.githubusercontent.com/OpenMOSE/Strata-GLM-AMD/6c71ff0d84f1543747ef9bc8451d56bcba3cccf7/CMakeLists.txt",
+          "sha256": "41ca3341969610ce47582a02658f7852ab00bd3944168d9ae6ed9a7c8b0a4443",
+          "bytes": 83034
+        },
+        "src/glm5/moe_q2k.cu": {
+          "url": "https://raw.githubusercontent.com/OpenMOSE/Strata-GLM-AMD/6c71ff0d84f1543747ef9bc8451d56bcba3cccf7/src/glm5/moe_q2k.cu",
+          "sha256": "10719560bf3fc7f63e38e2e1ffc28b0aca9c7dc83afd8ce5631f3cf5f79e3afa",
+          "bytes": 8326
+        },
+        "src/glm5/engine.cpp": {
+          "url": "https://raw.githubusercontent.com/OpenMOSE/Strata-GLM-AMD/6c71ff0d84f1543747ef9bc8451d56bcba3cccf7/src/glm5/engine.cpp",
+          "sha256": "0dcd3ef0c92f2c43fb60a450bcfe1c5a6a17e7ad41a7feed3de1ef210414dee6",
+          "bytes": 139412
+        }
+      }
+    },
+    {
+      "repository": "https://codeberg.org/ggz14/radiance-vllm-mxfp4",
+      "commit": "45da5063820c887d88c6d74af9215e5ba14bd7b3",
+      "checked_at_utc": "2026-10-09T07:36:52.790508+00:00",
+      "files": {
+        "README.md": {
+          "url": "https://codeberg.org/ggz14/radiance-vllm-mxfp4/raw/commit/45da5063820c887d88c6d74af9215e5ba14bd7b3/README.md",
+          "bytes": 72962,
+          "sha256": "28ae352727e4c7464fbe8649d8a491bafc70b2b5378b5feecd9c3f54a2cb14a6"
+        },
+        "serve-mxfp4.sh": {
+          "url": "https://codeberg.org/ggz14/radiance-vllm-mxfp4/raw/commit/45da5063820c887d88c6d74af9215e5ba14bd7b3/serve-mxfp4.sh",
+          "bytes": 79052,
+          "sha256": "5084c088d9103a718e50506df1de79269c2d72d1564aedb5baf13fecea18f60e"
+        },
+        "PERFORMANCE.md": {
+          "url": "https://codeberg.org/ggz14/radiance-vllm-mxfp4/raw/commit/45da5063820c887d88c6d74af9215e5ba14bd7b3/PERFORMANCE.md",
+          "bytes": 22616,
+          "sha256": "ba9df8b52896feb98b628065121752e49885787194bc7ed953ad66cebd783780"
+        }
+      }
+    }
+  ],
+  "paper": {
+    "url": "https://arxiv.org/html/2610.09372v1",
+    "topic": "Expert Coupling in MoE Pretraining",
+    "application_to_rocinante": "Inference hypothesis; paper benchmarks distributed training, not inference"
+  },
+  "candidate_reports": [
+    {
+      "url": "https://github.com/Niko1221/Strata/issues/1586",
+      "topic": "Swift IQ3_S dual-3090 sampled coding and long-context measurements"
+    },
+    {
+      "url": "https://github.com/Niko1221/Strata/issues/1651",
+      "topic": "Swift IQ3_S setup and shard validation limitations"
+    },
+    {
+      "url": "https://github.com/Niko1221/Strata/issues/1643",
+      "topic": "No-P2P peer expert tier and peer-assisted prefill faults"
+    },
+    {
+      "url": "https://alexkmiller.com/blog/2026/09/07/dual-r9700-llama-cpp-and-vllm.html",
+      "topic": "Dual-R9700 Qwen3.8-27B; maximum context is not actual benchmark depth"
+    }
+  ]
+}

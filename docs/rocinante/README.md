@@ -11,6 +11,7 @@ Our priority is **completed, correct agent tasks at 32K–100K context**, includ
 3. [Selected benchmark evidence](evidence/benchmarks-2026-10-09.json): aggregate measurements, matched repair pairs, protocol settings and source hashes.
 4. [External source revisions](evidence/research-sources-2026-10-09.json): pinned source URLs and hashes for the inspected GLM and Radiance code.
 5. [Opus as-built kernel patch](evidence/opus-as-built-2026-10-08.diff): exact source changes against the evaluation base, supplied as a review artifact.
+6. [PCIe fabrics and SM120 research resources](TOPOLOGY-RESOURCES-2026-10-09.md): the Local Inference Lab wiki, James O'Beirne's build, and switch/backplane leads for verification.
 
 ## Machine and serving snapshot
 
